@@ -17,9 +17,7 @@ import logging
 from typing import Optional
 
 import httpx
-import base64
-from fastmcp import FastMCP
-from mcp.types import ImageContent, TextContent
+from fastmcp import FastMCP, Image
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -476,11 +474,11 @@ async def search_assets(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @mcp.tool(annotations={"readOnlyHint": True})
-async def get_preview(id: str, width: int = 800):
+async def get_preview(id: str, width: int = 800) -> Image:
     """Display an asset's preview image inline in the chat.
 
-    Downloads the image server-side and returns it as base64 so it can be
-    displayed directly in Claude Desktop without sandbox restrictions.
+    Downloads the image server-side and returns it as an Image object
+    so it can be displayed directly in Claude Desktop without sandbox restrictions.
 
     Args:
         id: Asset ID (as returned by search_assets).
@@ -512,18 +510,14 @@ async def get_preview(id: str, width: int = 800):
             raise ValueError("Leere Bild-Antwort")
 
         content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
-        mime_type = "image/png" if "png" in content_type else "image/jpeg"
+        fmt = "png" if "png" in content_type else "jpeg"
 
-        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-        logger.info(f"get_preview: {len(img_bytes)} bytes, mime={mime_type}, asset={id}")
-        return [
-            ImageContent(type="image", data=img_b64, mimeType=mime_type),
-            TextContent(type="text", text=fallback_text),
-        ]
+        logger.info(f"get_preview: {len(img_bytes)} bytes, format={fmt}, asset={id}")
+        return Image(data=img_bytes, format=fmt)
 
     except Exception as e:
         logger.warning(f"get_preview: Download fehlgeschlagen: {e}")
-        return fallback_text
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
