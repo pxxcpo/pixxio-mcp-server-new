@@ -76,7 +76,19 @@ mcp = FastMCP(
         "sort_by='pixel', sort_direction='desc'\n\n"
         "'Alle Bilder mit der Artikelnummer 12345'\n"
         "→ erst get_searchable_metadata_fields → Feld 'Artikelnummer' finden "
-        "→ search_assets(metadata_filters=[{'field_id': <id>, 'value': '12345'}])"
+        "→ search_assets(metadata_filters=[{'field_id': <id>, 'value': '12345'}])\n\n"
+
+        "ERGEBNISSE PRÄSENTIEREN:\n"
+        "Präsentiere Suchergebnisse IMMER als Karten-Liste in deiner Antwort (nicht als rohen JSON). "
+        "Format für jede Karte:\n"
+        "**[Nr]. [Titel]**\n"
+        "📐 [Breite]×[Höhe]px · 📄 [fileExtension toUpperCase] · ⭐ [rating]/5 (wenn vorhanden)\n"
+        "🏷 [keywords kommagetrennt] (wenn vorhanden)\n"
+        "📝 [description] (wenn vorhanden, max. 1 Satz)\n"
+        "📅 [uploadDate]\n\n"
+        "Zeige am Anfang eine Zusammenfassung: 'X Ergebnisse gefunden (Seite Y)'\n"
+        "Bei include_previews=True sind Vorschaubilder im Tool-Ergebnis enthalten — weise den Nutzer darauf hin.\n"
+        "Rufe get_preview NICHT separat auf wenn Previews bereits im Ergebnis enthalten sind."
     ),
 )
 
@@ -146,6 +158,28 @@ def _absolute_url(url: str) -> str:
     return url
 
 
+async def _fetch_preview(asset_id: str, width: int = 600) -> Optional[Image]:
+    """Fetch preview image for an asset. Returns Image or None on failure."""
+    try:
+        data = await _api_get(f"/api/v1/files/{asset_id}/convert", {
+            "downloadType": "preview",
+            "responseType": "path",
+            "maxSize": width,
+        })
+        url = _absolute_url(data.get("downloadURL") or data.get("downloadUrl") or "")
+        if not url:
+            return None
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+            fmt = "png" if "png" in content_type else "jpeg"
+            return Image(data=resp.content, format=fmt)
+    except Exception as e:
+        logger.warning(f"Preview fetch fehlgeschlagen für {asset_id}: {e}")
+        return None
+
+
 def _build_filter(filters: list[dict], operator: str) -> Optional[dict]:
     """Combine a list of filter dicts into a single pixx.io filter object."""
     active = [f for f in filters if f]
@@ -187,7 +221,8 @@ async def search_assets(
     sort_direction: str = "desc",
     page: int = 1,
     page_size: int = 20,
-) -> dict:
+    include_previews: bool = True,
+):
     """Search for assets in the pixx.io Digital Asset Management system.
 
     Supports two search modes:
@@ -237,10 +272,13 @@ async def search_assets(
         sort_direction: "desc" (default, newest/largest first) or "asc".
         page: Page number, starts at 1.
         page_size: Results per page, max 100, default 20.
+        include_previews: Automatically load and include preview images in the response
+                          when there are 5 or fewer results. Default True.
 
     Returns:
         Dictionary with 'ids', 'results' (asset summaries), 'total_results', page info,
-        and 'search_mode' indicating which search mode was used.
+        and 'search_mode'. When include_previews=True and ≤5 results, preview images
+        are included after the summary data.
     """
     inverted_set = set(inverted_filters or [])
     filters: list[dict] = []
@@ -460,7 +498,7 @@ async def search_assets(
             "orientation":    f.get("orientation", ""),
         })
 
-    return {
+    summary = {
         "ids":           ids,
         "results":       results,
         "total_results": quantity,
@@ -468,6 +506,19 @@ async def search_assets(
         "page_size":     page_size,
         "search_mode":   "semantic" if (semantic and query) else "standard",
     }
+
+    # Automatically include preview images for small result sets — images first, JSON below
+    if include_previews and 0 < len(ids) <= 5:
+        import asyncio
+        previews = await asyncio.gather(*[_fetch_preview(fid) for fid in ids])
+        output: list = []
+        for result, preview in zip(results, previews):
+            if preview:
+                output.append(preview)
+        output.append(json.dumps(summary))
+        return output
+
+    return summary
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
