@@ -18,6 +18,7 @@ from typing import Optional
 
 import httpx
 from fastmcp import FastMCP
+from fastmcp.utilities.types import Image
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -136,6 +137,13 @@ async def _resolve_person_ids(name: str) -> list[int]:
     except Exception as exc:
         logger.warning(f"Person-Auflösung für '{name}' fehlgeschlagen: {exc}")
         return []
+
+
+def _absolute_url(url: str) -> str:
+    """Ensure a URL is absolute by prepending PIXXIO_BASE_URL if it's a relative path."""
+    if url and not url.startswith("http"):
+        return f"{PIXXIO_BASE_URL}{url}"
+    return url
 
 
 def _build_filter(filters: list[dict], operator: str) -> Optional[dict]:
@@ -445,7 +453,7 @@ async def search_assets(
             "file_extension": f.get("fileExtension", ""),
             "keywords":       f.get("keywords", []),
             "rating":         f.get("rating"),
-            "preview_url":    f.get("previewFileURL", ""),
+            "preview_url":    _absolute_url(f.get("previewFileURL", "")),
             "upload_date":    f.get("uploadDate", ""),
             "file_size":      f.get("fileSize"),
             "dimensions":     f"{f['width']}×{f['height']}" if f.get("width") else None,
@@ -460,6 +468,57 @@ async def search_assets(
         "page_size":     page_size,
         "search_mode":   "semantic" if (semantic and query) else "standard",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOOL 1b: get_preview
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool(annotations={"readOnlyHint": True})
+async def get_preview(id: str, width: int = 800):
+    """Display an asset's preview image inline in the chat.
+
+    Downloads the image server-side and returns it as base64 so it can be
+    displayed directly in Claude Desktop without sandbox restrictions.
+
+    Args:
+        id: Asset ID (as returned by search_assets).
+        width: Preview width in pixels (default: 800).
+
+    Returns:
+        The preview image displayed inline, plus a fallback URL.
+    """
+    data = await _api_get(f"/api/v1/files/{id}/convert", {
+        "downloadType": "preview",
+        "responseType": "path",
+        "maxSize": width,
+    })
+    download_url = data.get("downloadURL") or data.get("downloadUrl") or ""
+
+    if not download_url:
+        raise ValueError(f"Kein Preview verfügbar für Asset {id}.")
+
+    download_url = _absolute_url(download_url)
+    fallback_text = f"Preview für Asset {id}: {download_url}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(download_url)
+            resp.raise_for_status()
+            img_bytes = resp.content
+
+        if not img_bytes:
+            raise ValueError("Leere Bild-Antwort")
+
+        content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        fmt = "png" if "png" in content_type else "jpeg"
+
+        logger.info(f"get_preview: {len(img_bytes)} bytes, format={fmt}, asset={id}")
+        return [Image(data=img_bytes, format=fmt), fallback_text]
+
+    except Exception as e:
+        logger.warning(f"get_preview: Download fehlgeschlagen: {e}")
+        return fallback_text
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
