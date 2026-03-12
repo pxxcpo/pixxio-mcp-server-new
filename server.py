@@ -17,7 +17,8 @@ import logging
 from typing import Optional
 
 import httpx
-from fastmcp import FastMCP, Image
+from fastmcp import FastMCP
+from fastmcp.utilities.types import Image
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
