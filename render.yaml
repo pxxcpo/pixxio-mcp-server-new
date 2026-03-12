@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pixxio-mcp-server
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    envVars:
+      - key: PIXXIO_API_KEY
+        sync: false
+      - key: PIXXIO_BASE_URL
+        sync: false
+      - key: TRANSPORT
+        value: http
+      - key: PORT
+        value: 8000
