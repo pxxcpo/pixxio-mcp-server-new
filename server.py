@@ -17,8 +17,9 @@ import logging
 from typing import Optional
 
 import httpx
+import base64
 from fastmcp import FastMCP
-from fastmcp.utilities.types import Image
+from mcp.types import ImageContent, TextContent
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -511,10 +512,14 @@ async def get_preview(id: str, width: int = 800):
             raise ValueError("Leere Bild-Antwort")
 
         content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
-        fmt = "png" if "png" in content_type else "jpeg"
+        mime_type = "image/png" if "png" in content_type else "image/jpeg"
 
-        logger.info(f"get_preview: {len(img_bytes)} bytes, format={fmt}, asset={id}")
-        return [Image(data=img_bytes, format=fmt), fallback_text]
+        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        logger.info(f"get_preview: {len(img_bytes)} bytes, mime={mime_type}, asset={id}")
+        return [
+            ImageContent(type="image", data=img_b64, mimeType=mime_type),
+            TextContent(type="text", text=fallback_text),
+        ]
 
     except Exception as e:
         logger.warning(f"get_preview: Download fehlgeschlagen: {e}")
