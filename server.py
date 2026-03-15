@@ -206,6 +206,7 @@ async def search_assets(
     orientation: Optional[str] = None,
     rating_min: Optional[int] = None,
     person_name: Optional[str] = None,
+    person_names: Optional[list] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     min_width: Optional[int] = None,
@@ -244,9 +245,10 @@ async def search_assets(
         colorspace: Filter by colorspace: "RGB", "CMYK", or "GRAY". Use "CMYK" for print assets.
         orientation: Filter by orientation: "landscape", "portrait", or "square".
         rating_min: Minimum star rating (1–5). Use 4 or 5 for "high quality" requests.
-        person_name: Person's name to filter by (uses face recognition). The server
-                     automatically resolves the name to person IDs. Falls back to
+        person_name: Single person's name to filter by (uses face recognition). Falls back to
                      keyword search if no face recognition match is found.
+        person_names: Multiple person names (AND-combined). Use this when searching for
+                      assets containing ALL listed people, e.g. ["Richard", "Christoph"].
         date_from: Upload date start as YYYY-MM-DD (e.g. "2025-01-01").
                    Compute from natural language: "letztes Jahr" → "2025-01-01".
         date_to: Upload date end as YYYY-MM-DD (e.g. "2025-12-31").
@@ -337,33 +339,30 @@ async def search_assets(
         })
 
     # ── Person (face recognition) ──────────────────────────────────────────────
-    if person_name:
-        person_ids = await _resolve_person_ids(person_name)
+    # Normalize: merge person_name into person_names list
+    all_person_names: list[str] = list(person_names or [])
+    if person_name and person_name not in all_person_names:
+        all_person_names.insert(0, person_name)
+
+    for pname in all_person_names:
+        person_ids = await _resolve_person_ids(pname)
         if person_ids:
             if len(person_ids) == 1:
                 filters.append({
                     "filterType": "person",
                     "personID": person_ids[0],
-                    "inverted": "person_name" in inverted_set,
                 })
             else:
-                # Multiple persons match the name → OR-combine
                 filters.append({
                     "filterType": "connectorOr",
-                    "filters": [
-                        {"filterType": "person", "personID": pid}
-                        for pid in person_ids
-                    ],
-                    "inverted": "person_name" in inverted_set,
+                    "filters": [{"filterType": "person", "personID": pid} for pid in person_ids],
                 })
         else:
-            # Fallback: keyword filter
-            logger.info(f"Kein Person-Match für '{person_name}', nutze keyword-Filter")
+            logger.info(f"Kein Person-Match für '{pname}', nutze keyword-Filter")
             filters.append({
                 "filterType": "keyword",
-                "term": person_name,
+                "term": pname,
                 "exactMatch": False,
-                "inverted": "person_name" in inverted_set,
             })
 
     # ── Date range ─────────────────────────────────────────────────────────────
