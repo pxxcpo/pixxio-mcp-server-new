@@ -15,7 +15,7 @@ import os
 import re
 import json
 import logging
-from typing import Optional
+from typing import Optional, List
 
 import httpx
 from fastmcp import FastMCP
@@ -242,7 +242,7 @@ async def search_assets(
     orientation: Optional[str] = None,
     rating_min: Optional[int] = None,
     person_name: Optional[str] = None,
-    person_names: Optional[list] = None,
+    person_names: Optional[List[str]] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     min_width: Optional[int] = None,
@@ -251,9 +251,9 @@ async def search_assets(
     max_pixel: Optional[int] = None,
     directory_id: Optional[int] = None,
     collection_id: Optional[int] = None,
-    metadata_filters: Optional[list] = None,
+    metadata_filters: Optional[List[dict]] = None,
     operator: str = "AND",
-    inverted_filters: Optional[list] = None,
+    inverted_filters: Optional[List[str]] = None,
     sort_by: str = "uploadDate",
     sort_direction: str = "desc",
     page: int = 1,
