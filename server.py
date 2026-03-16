@@ -12,6 +12,7 @@ Environment variables:
 """
 
 import os
+import re
 import json
 import logging
 from typing import Optional
@@ -120,12 +121,14 @@ async def _resolve_person_ids(name: str) -> list[int]:
     """Resolve a person name to pixx.io person IDs using face recognition data.
 
     Searches files for the given name, extracts face/person objects, and
-    returns IDs where firstName or lastName matches.
+    returns IDs where firstName or lastName matches. Supports full names
+    (first + last) by splitting into parts and matching across both fields.
     """
     try:
+        parts = [p.lower() for p in name.strip().split()]
         data = await _api_get("/api/v1/files", {
             "showFiles": "true",
-            "pageSize": 50,
+            "pageSize": 100,
             "filter": json.dumps({
                 "filterType": "searchTerm",
                 "term": name,
@@ -134,15 +137,22 @@ async def _resolve_person_ids(name: str) -> list[int]:
             "responseFields": "id,faces",
         })
         person_ids: set[int] = set()
-        name_lower = name.lower()
         for f in data.get("files", []):
             for face in (f.get("faces") or []):
                 person = face.get("person") or {}
                 first = (person.get("firstName") or "").lower()
                 last  = (person.get("lastName") or "").lower()
-                if name_lower in first or name_lower in last:
-                    pid = person.get("id")
-                    if pid:
+                pid = person.get("id")
+                if not pid:
+                    continue
+                if len(parts) >= 2:
+                    # Full name: match first part in one field, second in the other
+                    if (parts[0] in first and parts[1] in last) or \
+                       (parts[0] in last  and parts[1] in first):
+                        person_ids.add(int(pid))
+                else:
+                    # Single name: substring match in either field
+                    if parts[0] in first or parts[0] in last:
                         person_ids.add(int(pid))
         logger.info(f"Person '{name}' → IDs: {person_ids or 'keine gefunden'}")
         return list(person_ids)
@@ -189,6 +199,32 @@ def _build_filter(filters: list[dict], operator: str) -> Optional[dict]:
         return active[0]
     connector = "connectorAnd" if operator.upper() != "OR" else "connectorOr"
     return {"filterType": connector, "filters": active}
+
+
+def _parse_query_filters(query: str, inverted: bool = False) -> list[dict]:
+    """Parse a query string with AND/OR operators into pixx.io filter list.
+
+    Supports: term1 AND term2, term1 OR term2 (case-insensitive, also UND/ODER).
+    Mixed AND/OR not supported — first connector wins.
+    Single term returns a single searchTerm filter.
+    """
+    # Normalize German connectors
+    q = re.sub(r'\bUND\b', 'AND', query, flags=re.IGNORECASE)
+    q = re.sub(r'\bODER\b', 'OR', q, flags=re.IGNORECASE)
+
+    if re.search(r'\bAND\b', q, re.IGNORECASE):
+        connector = "AND"
+        terms = [t.strip() for t in re.split(r'\bAND\b', q, flags=re.IGNORECASE) if t.strip()]
+    elif re.search(r'\bOR\b', q, re.IGNORECASE):
+        connector = "OR"
+        terms = [t.strip() for t in re.split(r'\bOR\b', q, flags=re.IGNORECASE) if t.strip()]
+    else:
+        return [{"filterType": "searchTerm", "term": query.strip(),
+                 "useSynonyms": True, "inverted": inverted}]
+
+    sub_filters = [{"filterType": "searchTerm", "term": t, "useSynonyms": True} for t in terms]
+    connector_type = "connectorAnd" if connector == "AND" else "connectorOr"
+    return [{"filterType": connector_type, "filters": sub_filters, "inverted": inverted}]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -287,12 +323,7 @@ async def search_assets(
 
     # ── Text / Semantic ────────────────────────────────────────────────────────
     if query and not semantic:
-        filters.append({
-            "filterType": "searchTerm",
-            "term": query,
-            "useSynonyms": True,
-            "inverted": "query" in inverted_set,
-        })
+        filters.extend(_parse_query_filters(query, inverted="query" in inverted_set))
 
     # ── File type & format ─────────────────────────────────────────────────────
     if file_type:
